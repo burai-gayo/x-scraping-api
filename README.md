@@ -52,10 +52,45 @@ X APIの有料プラン制限を回避し、リポスト、いいね、コメン
 
 4. **コメント確認** (`/api/check/comment`)
    - 指定ツイートにコメントしているかの判定
-   - コメント内容の取得
-   - 総コメント数の取得
+   - コメント内容の検索（オプション）
 
-### 追加機能
+### 認証・セキュリティ機能
+
+1. **自動ログイン機能**
+   - 環境変数に設定したユーザー名・パスワードによる自動ログイン
+   - クッキー有効期限切れ時の自動再ログイン
+   - 2FA認証の検出と手動介入の通知
+   - ログイン失敗時のリトライ機能
+
+2. **セッション管理**
+   - 24時間有効期限での自動セッション管理
+   - セッション状態の確認API (`/api/session/info`)
+   - セッション強制更新API (`/api/session/refresh`)
+   - セッション有効性の自動チェック
+
+3. **セキュリティ機能**
+   - APIキー認証による安全なアクセス制御
+   - Fernet暗号化によるCookie保護
+   - ログ内の個人情報自動マスキング
+   - ファイル権限の適切な設定
+
+### API機能
+
+1. **RESTful API**
+   - 標準的なHTTP APIインターフェース
+   - JSON形式でのリクエスト・レスポンス
+   - 詳細なエラーコードとメッセージ
+
+2. **レート制限**
+   - 分単位・時間単位でのリクエスト制限
+   - クライアント別の制限管理
+   - 制限超過時の適切なエラーレスポンス
+3. **監視・統計**
+   - 詳細なログ出力とローテーション
+   - API使用統計の取得 (`/api/stats`)
+   - ヘルスチェック機能 (`/api/health`)
+
+## システム要件
 
 - **ヘルスチェック** (`/api/health`): サーバー状態の確認
 - **統計情報** (`/api/stats`): レート制限状況の確認
@@ -169,6 +204,14 @@ SECRET_KEY=your-unique-secret-key-here
 API_KEY=your-secure-api-key-here
 ENCRYPTION_KEY=your-encryption-key-here
 
+# X.com自動ログイン設定
+X_USERNAME=your-x-username-here
+X_PASSWORD=your-x-password-here
+X_EMAIL=your-x-email-here
+AUTO_LOGIN_ENABLED=True
+LOGIN_RETRY_COUNT=3
+LOGIN_TIMEOUT=30
+
 # レート制限設定
 RATE_LIMIT_PER_MINUTE=30
 RATE_LIMIT_PER_HOUR=1000
@@ -178,7 +221,39 @@ MAX_CONCURRENT_REQUESTS=5
 LOG_LEVEL=INFO
 ```
 
-### 2. APIキーの生成
+### 2. X.com自動ログイン設定
+
+自動ログイン機能を使用するには、以下の設定が必要です：
+
+#### 2.1 ログイン情報の設定
+
+```bash
+# .envファイルに以下を設定
+X_USERNAME=your_twitter_username    # @マークなしのユーザー名
+X_PASSWORD=your_twitter_password    # パスワード
+X_EMAIL=your_twitter_email         # メールアドレス（必要に応じて）
+AUTO_LOGIN_ENABLED=True            # 自動ログインを有効化
+```
+
+#### 2.2 セキュリティ注意事項
+
+- **パスワードの保護**: .envファイルの権限を600に設定
+- **2FA認証**: 2FA有効時は手動介入が必要
+- **ログイン失敗**: 3回失敗後は手動ログインが必要
+
+```bash
+# .envファイルの権限設定
+chmod 600 .env
+```
+
+#### 2.3 自動ログイン動作
+
+1. **初回起動時**: 設定された認証情報で自動ログイン
+2. **Cookie期限切れ**: 自動的に再ログインを実行
+3. **ログイン失敗**: エラーログに記録し、手動介入を要求
+4. **2FA検出**: 手動認証が必要な旨をログに出力
+
+### 3. APIキーの生成
 
 セキュアなAPIキーを生成します：
 
@@ -501,6 +576,83 @@ curl -X POST http://localhost:5000/api/check/comment \
 | `RATE_LIMIT_EXCEEDED` | レート制限に達した | 429 |
 | `SCRAPING_ERROR` | スクレイピングエラー | 500 |
 | `INTERNAL_ERROR` | 内部エラー | 500 |
+
+### 6. セッション管理API
+
+#### 6.1 セッション情報取得
+
+**エンドポイント**: `GET /api/session/info`
+
+**説明**: 現在のセッション状態と有効期限を取得します。
+
+**リクエスト例**:
+```bash
+curl -H "X-API-Key: your-api-key" \
+     http://localhost:5000/api/session/info
+```
+
+**レスポンス例**:
+```json
+{
+  "success": true,
+  "result": {
+    "valid": true,
+    "last_valid": "2025-01-08T10:30:00.000000",
+    "expires_at": "2025-01-09T10:30:00.000000",
+    "validity_hours": 24,
+    "auto_login_enabled": true,
+    "last_login_method": "automatic",
+    "time_remaining": "23:45:30"
+  },
+  "details": "Session information retrieved successfully",
+  "timestamp": "2025-01-08T10:45:00.000000"
+}
+```
+
+#### 6.2 セッション強制更新
+
+**エンドポイント**: `POST /api/session/refresh`
+
+**説明**: セッションを強制的に無効化し、次回API呼び出し時に再ログインを実行します。
+
+**リクエスト例**:
+```bash
+curl -X POST \
+     -H "X-API-Key: your-api-key" \
+     http://localhost:5000/api/session/refresh
+```
+
+**レスポンス例**:
+```json
+{
+  "success": true,
+  "result": {
+    "message": "Session refreshed successfully",
+    "next_action": "Re-login required for next API call"
+  },
+  "details": "Session has been forcefully refreshed",
+  "timestamp": "2025-01-08T10:45:00.000000"
+}
+```
+
+#### 6.3 セッション管理の活用
+
+**自動ログイン状態の確認**:
+```bash
+# セッション情報を確認
+response=$(curl -s -H "X-API-Key: $API_KEY" http://localhost:5000/api/session/info)
+valid=$(echo $response | jq -r '.result.valid')
+
+if [ "$valid" = "false" ]; then
+    echo "Session expired - automatic re-login will occur on next API call"
+fi
+```
+
+**手動セッション更新**:
+```bash
+# 問題が発生した場合の強制更新
+curl -X POST -H "X-API-Key: $API_KEY" http://localhost:5000/api/session/refresh
+```
 
 ## PHP連携
 

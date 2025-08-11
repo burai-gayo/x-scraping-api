@@ -19,6 +19,14 @@ class Config:
     X_BASE_URL = 'https://x.com'
     COOKIE_FILE_PATH = os.path.join(os.path.dirname(__file__), 'cookies', 'x_cookies.json')
     
+    # X.com自動ログイン設定
+    X_USERNAME = os.getenv('X_USERNAME', '')
+    X_PASSWORD = os.getenv('X_PASSWORD', '')
+    X_EMAIL = os.getenv('X_EMAIL', '')  # ログイン時にメールアドレスが必要な場合
+    AUTO_LOGIN_ENABLED = os.getenv('AUTO_LOGIN_ENABLED', 'True').lower() == 'true'
+    LOGIN_RETRY_COUNT = int(os.getenv('LOGIN_RETRY_COUNT', '3'))
+    LOGIN_TIMEOUT = int(os.getenv('LOGIN_TIMEOUT', '30'))
+    
     # スクレイピング設定
     REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '10'))
     PAGE_LOAD_TIMEOUT = int(os.getenv('PAGE_LOAD_TIMEOUT', '15'))

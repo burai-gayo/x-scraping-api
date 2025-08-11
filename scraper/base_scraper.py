@@ -68,6 +68,17 @@ class BaseScraper:
                     app_logger.info("Login restored from cookies")
                     return True
             
+            # 自動ログインが有効な場合は実行
+            if Config.AUTO_LOGIN_ENABLED and Config.X_USERNAME and Config.X_PASSWORD:
+                app_logger.info("Attempting automatic login")
+                if self._perform_automatic_login():
+                    self.is_logged_in = True
+                    auth_manager.update_session_validity()
+                    # 新しいCookieを保存
+                    self.save_current_cookies()
+                    app_logger.info("Automatic login successful")
+                    return True
+            
             # 手動ログインが必要
             app_logger.warning("Manual login required - cookies not available or expired")
             return False
@@ -94,6 +105,202 @@ class BaseScraper:
             
         except Exception as e:
             app_logger.error(f"Failed to check login status: {e}")
+            return False
+    
+    def _perform_automatic_login(self):
+        """自動ログインを実行"""
+        try:
+            app_logger.info("Starting automatic login process")
+            
+            # ログインページに移動
+            self.page.get(Config.X_LOGIN_URL)
+            self.wait_for_page_load()
+            time.sleep(3)
+            
+            # ログインフォームの検出と入力
+            for attempt in range(Config.LOGIN_RETRY_COUNT):
+                try:
+                    app_logger.info(f"Login attempt {attempt + 1}/{Config.LOGIN_RETRY_COUNT}")
+                    
+                    # ユーザー名/メール入力フィールドを検索
+                    username_selectors = [
+                        'input[name="text"]',
+                        'input[autocomplete="username"]',
+                        'input[data-testid="ocfEnterTextTextInput"]',
+                        'input[placeholder*="phone" i]',
+                        'input[placeholder*="email" i]',
+                        'input[placeholder*="username" i]'
+                    ]
+                    
+                    username_field = None
+                    for selector in username_selectors:
+                        try:
+                            field = self.page.ele(selector, timeout=5)
+                            if field and field.is_enabled():
+                                username_field = field
+                                break
+                        except:
+                            continue
+                    
+                    if not username_field:
+                        app_logger.error("Username field not found")
+                        time.sleep(5)
+                        continue
+                    
+                    # ユーザー名またはメールアドレスを入力
+                    login_identifier = Config.X_EMAIL if Config.X_EMAIL else Config.X_USERNAME
+                    username_field.clear()
+                    username_field.input(login_identifier)
+                    app_logger.info(f"Entered username/email: {login_identifier[:3]}***")
+                    
+                    time.sleep(2)
+                    
+                    # 次へボタンをクリック
+                    next_button_selectors = [
+                        'div[role="button"]:has-text("Next")',
+                        'div[role="button"]:has-text("次へ")',
+                        'button:has-text("Next")',
+                        'button:has-text("次へ")',
+                        '[data-testid="ocfEnterTextNextButton"]'
+                    ]
+                    
+                    next_button = None
+                    for selector in next_button_selectors:
+                        try:
+                            button = self.page.ele(selector, timeout=3)
+                            if button and button.is_enabled():
+                                next_button = button
+                                break
+                        except:
+                            continue
+                    
+                    if next_button:
+                        next_button.click()
+                        time.sleep(3)
+                    
+                    # パスワード入力フィールドを検索
+                    password_selectors = [
+                        'input[name="password"]',
+                        'input[type="password"]',
+                        'input[autocomplete="current-password"]',
+                        'input[data-testid="ocfEnterTextTextInput"]'
+                    ]
+                    
+                    password_field = None
+                    for selector in password_selectors:
+                        try:
+                            field = self.page.ele(selector, timeout=10)
+                            if field and field.is_enabled():
+                                password_field = field
+                                break
+                        except:
+                            continue
+                    
+                    if not password_field:
+                        app_logger.error("Password field not found")
+                        time.sleep(5)
+                        continue
+                    
+                    # パスワードを入力
+                    password_field.clear()
+                    password_field.input(Config.X_PASSWORD)
+                    app_logger.info("Password entered")
+                    
+                    time.sleep(2)
+                    
+                    # ログインボタンをクリック
+                    login_button_selectors = [
+                        'div[role="button"]:has-text("Log in")',
+                        'div[role="button"]:has-text("ログイン")',
+                        'button:has-text("Log in")',
+                        'button:has-text("ログイン")',
+                        '[data-testid="LoginForm_Login_Button"]'
+                    ]
+                    
+                    login_button = None
+                    for selector in login_button_selectors:
+                        try:
+                            button = self.page.ele(selector, timeout=3)
+                            if button and button.is_enabled():
+                                login_button = button
+                                break
+                        except:
+                            continue
+                    
+                    if not login_button:
+                        app_logger.error("Login button not found")
+                        time.sleep(5)
+                        continue
+                    
+                    login_button.click()
+                    app_logger.info("Login button clicked")
+                    
+                    # ログイン完了を待機
+                    time.sleep(10)
+                    
+                    # 2FA認証やその他の認証ステップをチェック
+                    if self._handle_additional_auth_steps():
+                        time.sleep(5)
+                    
+                    # ログイン成功を確認
+                    if self._check_login_status():
+                        app_logger.info("Automatic login successful")
+                        return True
+                    
+                    app_logger.warning(f"Login attempt {attempt + 1} failed, retrying...")
+                    time.sleep(5)
+                    
+                except Exception as e:
+                    app_logger.error(f"Login attempt {attempt + 1} error: {e}")
+                    time.sleep(5)
+                    continue
+            
+            app_logger.error("All automatic login attempts failed")
+            return False
+            
+        except Exception as e:
+            app_logger.error(f"Automatic login failed: {e}")
+            return False
+    
+    def _handle_additional_auth_steps(self):
+        """追加の認証ステップを処理"""
+        try:
+            # 2FA認証の検出
+            auth_code_selectors = [
+                'input[name="verfication_code"]',
+                'input[placeholder*="code" i]',
+                'input[data-testid="ocfEnterTextTextInput"]'
+            ]
+            
+            for selector in auth_code_selectors:
+                try:
+                    field = self.page.ele(selector, timeout=3)
+                    if field:
+                        app_logger.warning("2FA authentication detected - manual intervention required")
+                        # 2FA認証は手動で処理する必要がある
+                        return True
+                except:
+                    continue
+            
+            # 電話番号確認の検出
+            phone_selectors = [
+                'input[name="phone_number"]',
+                'input[placeholder*="phone" i]'
+            ]
+            
+            for selector in phone_selectors:
+                try:
+                    field = self.page.ele(selector, timeout=3)
+                    if field:
+                        app_logger.warning("Phone verification detected - manual intervention required")
+                        return True
+                except:
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            app_logger.error(f"Error handling additional auth steps: {e}")
             return False
     
     def save_current_cookies(self):

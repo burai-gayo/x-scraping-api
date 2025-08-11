@@ -90,20 +90,136 @@ class AuthManager:
     
     def is_session_valid(self):
         """セッションの有効性をチェック"""
-        if self.session_valid_until is None:
+        try:
+            # セッション有効期限ファイルをチェック
+            session_file = os.path.join(os.path.dirname(self.cookie_file), 'session_validity.json')
+            
+            if not os.path.exists(session_file):
+                return False
+            
+            with open(session_file, 'r') as f:
+                session_data = json.load(f)
+            
+            last_valid = datetime.fromisoformat(session_data.get('last_valid', '2000-01-01T00:00:00'))
+            validity_hours = session_data.get('validity_hours', 24)
+            
+            # 有効期限をチェック（デフォルト24時間）
+            if datetime.utcnow() - last_valid > timedelta(hours=validity_hours):
+                app_logger.info("Session expired, automatic re-login required")
+                return False
+            
+            # Cookieファイルの存在確認
+            if not os.path.exists(self.cookie_file):
+                return False
+            
+            # Cookieファイルの更新時間をチェック
+            cookie_mtime = datetime.fromtimestamp(os.path.getmtime(self.cookie_file))
+            if datetime.utcnow() - cookie_mtime > timedelta(hours=validity_hours):
+                app_logger.info("Cookie file too old, re-login required")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            app_logger.error(f"Error checking session validity: {e}")
             return False
-        
-        return datetime.utcnow() < self.session_valid_until
     
     def update_session_validity(self, valid_duration_hours=24):
         """セッション有効期限を更新"""
-        self.session_valid_until = datetime.utcnow() + timedelta(hours=valid_duration_hours)
-        app_logger.info(f"Session validity updated until {self.session_valid_until}")
+        try:
+            session_file = os.path.join(os.path.dirname(self.cookie_file), 'session_validity.json')
+            
+            session_data = {
+                'last_valid': datetime.utcnow().isoformat(),
+                'validity_hours': valid_duration_hours,
+                'auto_login_enabled': getattr(Config, 'AUTO_LOGIN_ENABLED', True),
+                'last_login_method': 'automatic' if getattr(Config, 'AUTO_LOGIN_ENABLED', True) else 'manual'
+            }
+            
+            os.makedirs(os.path.dirname(session_file), exist_ok=True)
+            
+            with open(session_file, 'w') as f:
+                json.dump(session_data, f, indent=2)
+            
+            # ファイル権限を制限
+            os.chmod(session_file, 0o600)
+            
+            # 従来の方法も維持
+            self.session_valid_until = datetime.utcnow() + timedelta(hours=valid_duration_hours)
+            
+            app_logger.info(f"Session validity updated until {self.session_valid_until}")
+            
+        except Exception as e:
+            app_logger.error(f"Error updating session validity: {e}")
+            # フォールバック
+            self.session_valid_until = datetime.utcnow() + timedelta(hours=valid_duration_hours)
     
     def invalidate_session(self):
         """セッションを無効化"""
         self.session_valid_until = None
+        
+        # セッション有効性ファイルも削除
+        try:
+            session_file = os.path.join(os.path.dirname(self.cookie_file), 'session_validity.json')
+            if os.path.exists(session_file):
+                os.remove(session_file)
+        except Exception as e:
+            app_logger.error(f"Error removing session file: {e}")
+        
         app_logger.info("Session invalidated")
+    
+    def force_session_refresh(self):
+        """セッションの強制更新"""
+        try:
+            session_file = os.path.join(os.path.dirname(self.cookie_file), 'session_validity.json')
+            
+            if os.path.exists(session_file):
+                os.remove(session_file)
+            
+            if os.path.exists(self.cookie_file):
+                os.remove(self.cookie_file)
+            
+            self.session_valid_until = None
+            
+            app_logger.info("Session forcefully refreshed - re-login required")
+            
+        except Exception as e:
+            app_logger.error(f"Error forcing session refresh: {e}")
+    
+    def get_session_info(self):
+        """セッション情報を取得"""
+        try:
+            session_file = os.path.join(os.path.dirname(self.cookie_file), 'session_validity.json')
+            
+            if not os.path.exists(session_file):
+                return {
+                    'valid': False,
+                    'reason': 'No session file found'
+                }
+            
+            with open(session_file, 'r') as f:
+                session_data = json.load(f)
+            
+            last_valid = datetime.fromisoformat(session_data.get('last_valid', '2000-01-01T00:00:00'))
+            validity_hours = session_data.get('validity_hours', 24)
+            expires_at = last_valid + timedelta(hours=validity_hours)
+            
+            return {
+                'valid': self.is_session_valid(),
+                'last_valid': session_data.get('last_valid'),
+                'expires_at': expires_at.isoformat(),
+                'validity_hours': validity_hours,
+                'auto_login_enabled': session_data.get('auto_login_enabled', False),
+                'last_login_method': session_data.get('last_login_method', 'unknown'),
+                'time_remaining': str(expires_at - datetime.utcnow()) if expires_at > datetime.utcnow() else '0:00:00'
+            }
+            
+        except Exception as e:
+            app_logger.error(f"Error getting session info: {e}")
+            return {
+                'valid': False,
+                'reason': f'Error: {str(e)}'
+            }
     
     def cleanup_expired_cookies(self):
         """期限切れのCookieファイルを削除"""

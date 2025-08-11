@@ -363,6 +363,55 @@ def check_comment():
             }
         )), 500
 
+@app.route('/api/session/info', methods=['GET'])
+@require_api_key
+def get_session_info():
+    """セッション情報を取得"""
+    try:
+        session_info = auth_manager.get_session_info()
+        
+        return jsonify(create_response(
+            success=True,
+            result=session_info,
+            details='Session information retrieved successfully'
+        ))
+        
+    except Exception as e:
+        app_logger.error(f"Session info error: {e}")
+        return jsonify(create_response(
+            success=False,
+            error={
+                'code': 'SESSION_INFO_ERROR',
+                'message': str(e)
+            }
+        )), 500
+
+@app.route('/api/session/refresh', methods=['POST'])
+@require_api_key
+def refresh_session():
+    """セッションを強制更新"""
+    try:
+        auth_manager.force_session_refresh()
+        
+        return jsonify(create_response(
+            success=True,
+            result={
+                'message': 'Session refreshed successfully',
+                'next_action': 'Re-login required for next API call'
+            },
+            details='Session has been forcefully refreshed'
+        ))
+        
+    except Exception as e:
+        app_logger.error(f"Session refresh error: {e}")
+        return jsonify(create_response(
+            success=False,
+            error={
+                'code': 'SESSION_REFRESH_ERROR',
+                'message': str(e)
+            }
+        )), 500
+
 @app.route('/api/stats', methods=['GET'])
 @require_api_key
 def get_stats():
